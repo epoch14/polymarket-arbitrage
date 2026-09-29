@@ -105,6 +105,34 @@ logging:
   max_log_size_mb: 50
   backup_count: 5
 
+collector:
+  # Universe: top-N Polymarket markets by 24h volume
+  poly_universe_size: 150
+  poly_poll_interval: 2.0        # hot-path book refresh
+  poly_book_chunk: 50            # token_ids per POST /books call
+  poly_snapshot_interval: 5.0    # DB write cadence for top-of-book
+  depth_interval: 30.0           # full 5-level depth sampling
+  kalshi_rate_limit: 8.0         # req/s token bucket (429-aware)
+  kalshi_workers: 4
+  kalshi_slow_interval: 90.0     # sweep cadence for non-matched tickers
+  kalshi_extra_size: 50
+  spot_interval: 5.0
+  spot_symbols: ["BTC", "ETH", "SOL"]
+  trades_interval: 120.0
+  universe_interval: 3600.0      # hourly universe + pair refresh
+  rollup_interval: 300.0
+  integrity_interval: 600.0
+  prune_interval: 86400.0
+  health_interval: 30.0
+  db_path: "data/market.db"
+  min_pair_similarity: 0.6
+  max_book_age: 30.0
+  poly_taker_bps: 150.0          # conservative placeholder (Phase 1: per-market schedule)
+  retention_days: 14             # raw snapshots; 5m rollups kept forever
+  min_free_disk_gb: 10.0
+  max_rss_mb: 350.0
+  kuma_push_url: ""              # override with KUMA_PUSH_URL env
+
 monitoring:
   # Portfolio snapshot interval (seconds)
   snapshot_interval: 60

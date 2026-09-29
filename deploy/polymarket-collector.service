@@ -1,0 +1,20 @@
+[Unit]
+Description=Polymarket+Kalshi market data collector (24/7)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+WorkingDirectory=/home/opencode-user/polymarket-arbitrage
+ExecStart=/home/opencode-user/polymarket-arbitrage/.venv/bin/python run_collector.py
+Restart=always
+RestartSec=5
+WatchdogSec=120
+MemoryMax=500M
+CPUQuota=50%
+Nice=5
+# KUMA_PUSH_URL injected via environment file if present
+EnvironmentFile=-/home/opencode-user/polymarket-arbitrage/deploy/collector.env
+
+[Install]
+WantedBy=default.target
