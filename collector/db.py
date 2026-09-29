@@ -119,6 +119,29 @@ CREATE TABLE IF NOT EXISTS bot_events (
     component TEXT,
     message TEXT
 );
+
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id INTEGER PRIMARY KEY,
+    ts_epoch REAL NOT NULL,
+    strategy TEXT NOT NULL,
+    market TEXT NOT NULL,
+    detail TEXT,
+    side TEXT,
+    qty REAL,
+    price REAL,
+    notional REAL,
+    fee REAL,
+    trade_key TEXT UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS paper_equity (
+    id INTEGER PRIMARY KEY,
+    ts_epoch REAL NOT NULL,
+    balance REAL,
+    positions_value REAL,
+    equity REAL,
+    open_positions INTEGER
+);
 """
 
 
@@ -132,7 +155,8 @@ class Recorder:
     """Batched async writer. Feeds put rows; one task flushes every interval."""
 
     TABLES = ("book_snapshots", "trades", "market_metadata", "pairs",
-              "opportunity_snapshots", "spot_prices", "bot_events")
+              "opportunity_snapshots", "spot_prices", "bot_events",
+              "paper_trades", "paper_equity")
     # market_metadata/pairs are UPSERTs (keyed by natural key)
     UPSERT = {
         "market_metadata": """INSERT INTO market_metadata
@@ -169,6 +193,10 @@ class Recorder:
                                   "edge_pct", "score", "details_json"],
         "spot_prices": ["ts_epoch", "symbol", "price"],
         "bot_events": ["ts_epoch", "level", "component", "message"],
+        "paper_trades": ["ts_epoch", "strategy", "market", "detail", "side",
+                         "qty", "price", "notional", "fee", "trade_key"],
+        "paper_equity": ["ts_epoch", "balance", "positions_value", "equity",
+                         "open_positions"],
     }
 
     def __init__(self, db_path: str, flush_interval: float = 1.0):
@@ -239,7 +267,7 @@ class Recorder:
             placeholders = ",".join("?" * len(cols))
             if table in self.UPSERT:
                 sql = self.UPSERT[table]
-            elif table == "trades":  # re-polls re-fetch the same prints
+            elif table in ("trades", "paper_trades"):  # re-polls / dedup by unique key
                 sql = (f"INSERT OR IGNORE INTO {table} ({','.join(cols)}) "
                        f"VALUES ({placeholders})")
             else:

@@ -66,6 +66,9 @@ DEFAULTS = {
     "retention_days": 14,
     "min_free_disk_gb": 10.0,
     "max_rss_mb": 350.0,
+    "paper_enabled": True,
+    "paper_balance": 100000.0,
+    "paper_notional_per_trade": 1000.0,
 }
 
 KRAKEN_FALLBACK_OK = True
@@ -122,6 +125,14 @@ class Collector:
         self.scorer = OpportunityScorer(
             self.recorder, poly_taker_bps=cfg["poly_taker_bps"],
             max_book_age=cfg["max_book_age"])
+        from collector.paper import PaperTrader
+        self.paper = PaperTrader(
+            self.recorder,
+            balance=cfg["paper_balance"],
+            notional_per_trade=cfg["paper_notional_per_trade"],
+            poly_taker_bps=cfg["poly_taker_bps"],
+            max_book_age=cfg["max_book_age"],
+        ) if cfg.get("paper_enabled") else None
         self._tasks: list[asyncio.Task] = []
         self._running = False
         self._last_depth = 0.0
@@ -158,6 +169,7 @@ class Collector:
             "kalshi_slow": self._kalshi_slow_loop(),
             "book_writer": self._book_writer_loop(),
             "scorer": self._scorer_loop(),
+            "paper": self._paper_loop() if self.paper else self._idle_loop(),
             "spot": self._simple_loop(self.cfg["spot_interval"], self._spot_tick),
             "trades": self._simple_loop(self.cfg["trades_interval"], self._trades_tick),
             "rollup": self._simple_loop(self.cfg["rollup_interval"], self._rollup_tick),
@@ -356,6 +368,37 @@ class Collector:
             except Exception:
                 logger.exception("scorer error")
 
+    async def _idle_loop(self) -> None:
+        while self._running:
+            await asyncio.sleep(3600)
+
+    async def _paper_loop(self) -> None:
+        """Paper trading: consumes the scorer's edges, fills with latency+depth
+        honesty, marks to market. Cross-venue only for verified pairs."""
+        while self._running:
+            await asyncio.sleep(2.0)
+            try:
+                if self.paper is None:
+                    return
+                # refresh verified pairs from DB every 5 min
+                if not hasattr(self, "_verified_ts") or time.time() - self._verified_ts > 300:
+                    self._verified_ts = time.time()
+                    rows = self.recorder._conn.execute(
+                        "SELECT poly_market, kalshi_ticker FROM pairs WHERE status='verified'"
+                    ).fetchall()
+                    self.paper.verified_pairs = set(tuple(r) for r in rows)
+                    if rows:
+                        logger.info("paper: %d verified pairs enabled", len(rows))
+                edges = self.scorer.last_pairs_rows + self.scorer.last_bundle_rows
+                self.paper.on_edges(edges, self.poly.books, self.kalshi.books)
+                snap = self.paper.mark(self.poly.books, self.kalshi.books)
+                if snap.get("trades") and snap["trades"] % 10 == 0:
+                    logger.info("paper: trades=%d pnl=$%.2f positions=%d rejected=%s",
+                                snap["trades"], snap["pnl"], snap["open_positions"],
+                                snap["rejected"])
+            except Exception:
+                logger.exception("paper loop error")
+
     # ------------------------------------------------------------------
 
     async def _spot_tick(self) -> None:
@@ -400,6 +443,7 @@ class Collector:
             "spot": {"symbols": self.spot.prices, "errors": self.spot.errors},
             "pairs": len(self.pairs.matched_pairs),
             "opportunities_logged": self.scorer.count,
+            "paper": self.paper.snapshot if self.paper else None,
             "recorder": {"written": self.recorder.written, "dropped": self.recorder.dropped},
         }
         # alarms + rate recovery
@@ -455,6 +499,7 @@ class Collector:
             "kalshi_slow": self._kalshi_slow_loop,
             "book_writer": self._book_writer_loop,
             "scorer": self._scorer_loop,
+            "paper": self._paper_loop if self.paper else self._idle_loop,
             "refresh_pairs": self._refresh_pairs,
             "spot": lambda: self._simple_loop(self.cfg["spot_interval"], self._spot_tick),
             "trades": lambda: self._simple_loop(self.cfg["trades_interval"], self._trades_tick),

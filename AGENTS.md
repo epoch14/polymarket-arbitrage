@@ -14,6 +14,15 @@ systemctl --user status|restart|stop polymarket-collector
 journalctl --user -u polymarket-collector -f        # logs
 cat data/health.json                                # liveness/metrics snapshot
 
+# reports (daily 08:00 / weekly Mon / monthly 1st via bot-report@ timers)
+.venv/bin/python generate_report.py daily|weekly|monthly [--no-send]
+systemctl --user list-timers 'bot-report*'          # schedule
+# -> HTML in reports/, emailed via n8n webhook -> Gmail (rf@eca.us)
+
+# pair verification — ONLY verified pairs paper-trade cross-venue
+.venv/bin/python verify_pairs.py                    # list pending
+.venv/bin/python verify_pairs.py --approve <id...> | --reject <id...>
+
 # tests
 .venv/bin/python -m pytest tests/ -v
 ```
@@ -21,17 +30,27 @@ cat data/health.json                                # liveness/metrics snapshot
 ## Architecture
 
 - `run_collector.py` + `collector/` — 24/7 data collector (systemd user service,
-  watchdog via Type=notify). Hot path (books → scorer) never blocks on disk;
-  cold path batches to `data/market.db` (SQLite WAL) every 1s.
+  watchdog via Type=notify). Hot path (books → scorer → paper trader) never
+  blocks on disk; cold path batches to `data/market.db` (SQLite WAL) every 1s.
 - `collector/db.py` — schema, batched Recorder, 5-min rollups (`book_rollups_5m`
   kept forever), 14-day raw retention, gap checks.
 - `collector/feeds.py` — Polymarket (Gamma universe top-150 by 24h vol, batched
   `POST clob/books`), Kalshi (token-bucket 8 req/s, events→series discovery),
   Spot (Coinbase→Kraken fallback).
 - `collector/features.py` — passive OpportunityScorer: logs EVERY edge snapshot
-  (incl. near-misses) to `opportunity_snapshots`. No execution.
+  (incl. near-misses) to `opportunity_snapshots`; stashes tick rows for the
+  paper trader. No execution.
+- `collector/paper.py` — PaperTrader: $100k paper book. Fills are latency-exposed
+  (next 2s tick), 1-tick adverse slippage, 50% depth cap, full fee model.
+  Bundle strategy trades any fresh book; cross-venue ONLY for verified pairs.
+  Equity curve -> `paper_equity`, fills -> `paper_trades`.
 - `collector/universe.py` — candidate pairs via `core/cross_platform_arb.py`
-  MarketMatcher; all pairs `status='pending'`; unverified pairs never signal.
+  MarketMatcher; all pairs `status='pending'`; multi-outcome list markets excluded.
+- `generate_report.py` — KPIs + SVG equity chart + tables from the DB; saves
+  `reports/<date>-<period>.html`; POSTs to n8n webhook (REPORT_WEBHOOK_URL in
+  gitignored `deploy/reporting.env`) -> n8n workflow "Bot Report Emailer"
+  (id BkuE44pmeebjgT3j on n8n2.eca.us) -> Gmail to rf@eca.us.
+- `verify_pairs.py` — human-in-the-loop pair verification CLI.
 - `core/`, `polymarket_client/`, `kalshi_client/` — legacy trading bot (dry_run).
   The cross-platform arb engine here is UNWIRED from main.py (known issue).
 

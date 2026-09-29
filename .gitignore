@@ -72,3 +72,4 @@ config.live.yaml
 # collector data
 data/
 deploy/collector.env
+deploy/reporting.env

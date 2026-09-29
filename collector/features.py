@@ -51,6 +51,8 @@ class OpportunityScorer:
         self._pair_state: dict[str, tuple] = {}    # pair_key -> (hash, last_write)
         self._bundle_state: dict[str, tuple] = {}
         self.count = 0
+        self.last_pairs_rows: list[dict] = []    # this tick's cross-venue edges
+        self.last_bundle_rows: list[dict] = []   # this tick's bundle edges
 
     # ------------------------------------------------------------------
 
@@ -60,6 +62,7 @@ class OpportunityScorer:
         """Cross-venue edges for every pair with fresh books on both sides."""
         now = time.time()
         written = 0
+        rows: list[dict] = []
         for poly_id, ticker in pairs:
             pb = poly_books.get(poly_id)
             kb = kalshi_books.get(ticker)
@@ -79,7 +82,7 @@ class OpportunityScorer:
                 self._pair_state[key] = (h, now)
                 continue
             direction, gross, net, details = best
-            self.recorder.put("opportunity_snapshots", {
+            row = {
                 "ts_epoch": now,
                 "strategy": f"xplat_{direction.split('_')[0].lower()}",
                 "poly_market": poly_id,
@@ -94,16 +97,20 @@ class OpportunityScorer:
                 "edge_pct": round(net / details["buy_price"], 6) if details["buy_price"] else 0,
                 "score": round(net, 6),
                 "details_json": json.dumps(details, separators=(",", ":")),
-            })
+            }
+            self.recorder.put("opportunity_snapshots", row)
+            rows.append(row)
             self._pair_state[key] = (h, now)
             self.count += 1
             written += 1
+        self.last_pairs_rows = rows
         return written
 
     def score_bundles(self, poly_books: dict[str, BookSnapshot]) -> int:
         """Single-venue bundle parity checks (Polymarket)."""
         now = time.time()
         written = 0
+        rows: list[dict] = []
         for cid, pb in poly_books.items():
             if now - pb.ts_epoch > self.max_book_age:
                 continue
@@ -130,7 +137,7 @@ class OpportunityScorer:
             if prev and prev[0] == h and now - prev[1] < 300:
                 continue
 
-            self.recorder.put("opportunity_snapshots", {
+            row = {
                 "ts_epoch": now,
                 "strategy": strat,
                 "poly_market": cid,
@@ -145,10 +152,13 @@ class OpportunityScorer:
                 "edge_pct": round(net, 6),
                 "score": round(net, 6),
                 "details_json": None,
-            })
+            }
+            self.recorder.put("opportunity_snapshots", row)
+            rows.append(row)
             self._bundle_state[cid] = (h, now)
             self.count += 1
             written += 1
+        self.last_bundle_rows = rows
         return written
 
     # ------------------------------------------------------------------
