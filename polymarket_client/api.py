@@ -246,12 +246,17 @@ class PolymarketClient(BasePolymarketClient):
                 params["limit"] = limit
                 params["offset"] = offset
                 
-                data = await self._request(
-                    "GET", 
-                    "/markets",
-                    params=params,
-                    base_url=self.gamma_url,
-                )
+                try:
+                    data = await self._request(
+                        "GET",
+                        "/markets",
+                        params=params,
+                        base_url=self.gamma_url,
+                    )
+                except httpx.HTTPStatusError as e:
+                    # ponytail: Gamma API rejects offset>2000; stop paginating there
+                    logger.info(f"Pagination limit reached ({e.response.status_code}), using {len(all_markets)} markets fetched so far")
+                    break
                 
                 if not data:
                     break

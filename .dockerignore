@@ -1,0 +1,6 @@
+.git
+*.mp4
+*.png
+logs/
+venv/
+__pycache__/
